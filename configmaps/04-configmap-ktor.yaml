@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ktor-perf-config
+  namespace: perf-test
+data:
+  application.yaml: |
+    ktor:
+      application:
+        modules:
+          - hr.algebra.perf.ApplicationKt.module
+      deployment:
+        port: 8080
+    database:
+      jdbcUrl: "jdbc:postgresql://postgresql:5432/postgres"
+      username: perf_a
+      password: 1234567890
+      driverClassName: "org.postgresql.Driver"
+      schema: "perf"
+      embedded: false
+      hikari:
+        maximumPoolSize: 50
+        minimumIdle: 10
+        idleTimeout: 300000
+        connectionTimeout: 20000
+        maxLifetime: 1800000
+        poolName: "KtorPerfPool"
+        autoCommit: true
+        connectionTestQuery: "SELECT 1"
+    redis:
+      host: "redis"
+      port: 6379
+      ttl: 300
+    kafka:
+      brokers: "kafka:9092"
+      topic: "order-events"
+      acks: "1"

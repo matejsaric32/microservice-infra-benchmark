@@ -1,0 +1,41 @@
+# nginx-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-configuration
+  namespace: ingress-nginx
+data:
+  # Connection limits
+  worker-connections: "65536"
+  worker-processes: "auto"
+  max-worker-connections: "65536"
+
+  # Keepalive settings
+  upstream-keepalive-connections: "10000"
+  upstream-keepalive-requests: "1000000"
+  upstream-keepalive-timeout: "900"
+  keep-alive: "900"
+  keep-alive-requests: "1000000"
+
+  # Buffer sizes
+  client-body-buffer-size: "32k"
+  client-header-buffer-size: "32k"
+  large-client-header-buffers: "8 32k"
+  proxy-buffer-size: "32k"
+  proxy-buffers: "8 32k"
+
+  # Timeouts
+  proxy-connect-timeout: "600"
+  proxy-send-timeout: "600"
+  proxy-read-timeout: "600"
+
+  # Other performance settings
+  use-gzip: "false"
+  use-http2: "true"
+  ssl-redirect: "false"
+
+  # File descriptors
+  worker-rlimit-nofile: "65536"
+
+  # Disable access logs for performance
+  disable-access-log: "true"

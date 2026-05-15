@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spring-perf-config
+  namespace: perf-test
+data:
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://postgresql:5432/postgres?currentSchema=perf"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+
+  # Kafka configuration
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+  SPRING_KAFKA_PRODUCER_COMPRESSION_TYPE: "none"

@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quarkus-perf-jvm
+  namespace: perf-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quarkus-perf-jvm
+  template:
+    metadata:
+      labels:
+        app: quarkus-perf-jvm
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/q/metrics"
+    spec:
+      containers:
+        - name: quarkus-perf-jvm
+          image: localhost/quarkus-perf-jvm:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: quarkus-perf-config
+            - secretRef:
+                name: perf-secret
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"

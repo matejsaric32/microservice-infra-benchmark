@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-perf
+  namespace: perf-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spring-perf
+  template:
+    metadata:
+      labels:
+        app: spring-perf
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      containers:
+        - name: spring-perf
+          image: localhost/spring-perf:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: spring-perf-config
+            - secretRef:
+                name: perf-secret
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"

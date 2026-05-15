@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actix-perf
+  namespace: perf-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: actix-perf
+  template:
+    metadata:
+      labels:
+        app: actix-perf
+    spec:
+      containers:
+        - name: actix-perf
+          image: localhost/actix-perf:latest
+          imagePullPolicy: Never
+          workingDir: /app
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yml
+              subPath: config.yml
+          env:
+            - name: RUST_BACKTRACE
+              value: "1"
+            - name: RUST_LOG
+              value: "info"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+      volumes:
+        - name: config
+          configMap:
+            name: actix-perf-yaml-config

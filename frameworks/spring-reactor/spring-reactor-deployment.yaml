@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-reactor-perf
+  namespace: perf-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spring-reactor-perf
+  template:
+    metadata:
+      labels:
+        app: spring-reactor-perf
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      containers:
+        - name: spring-reactor-perf
+          image: localhost/spring-reactive-perf:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: spring-reactor-perf-config
+            - secretRef:
+                name: perf-secret
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"

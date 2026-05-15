@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ktor-perf
+  namespace: perf-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ktor-perf
+  template:
+    metadata:
+      labels:
+        app: ktor-perf
+    spec:
+      containers:
+        - name: ktor-perf
+          image: localhost/ktor-perf:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          command: ["java", "-jar", "app.jar", "-config=/app/application.yaml"]
+          volumeMounts:
+            - name: config
+              mountPath: /app/application.yaml
+              subPath: application.yaml
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 1
+            timeoutSeconds: 2
+            failureThreshold: 60
+      volumes:
+        - name: config
+          configMap:
+            name: ktor-perf-config

@@ -1,0 +1,416 @@
+---
+# ConfigMap with initialization SQL scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: perf-test
+data:
+  01-init-schema.sql: |
+    -- Create perf schema
+    CREATE SCHEMA IF NOT EXISTS perf;
+    
+    -- Switch to public schema for initial tables
+    SET search_path TO perf;
+    
+    -- Create users table
+    CREATE TABLE IF NOT EXISTS perf.users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) NOT NULL UNIQUE,
+        email VARCHAR(100) NOT NULL,
+        full_name VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- Create orders table
+    CREATE TABLE IF NOT EXISTS perf.orders (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        total_amount DECIMAL(10, 2) NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT check_status CHECK (status IN ('pending', 'processing', 'completed', 'cancelled'))
+    );
+    
+    -- Create order_items table
+    CREATE TABLE IF NOT EXISTS perf.order_items (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER NOT NULL REFERENCES orders(id),
+        product_name VARCHAR(100) NOT NULL,
+        quantity INTEGER NOT NULL,
+        price DECIMAL(10, 2) NOT NULL
+    );
+    
+    -- Create products table
+    CREATE TABLE IF NOT EXISTS perf.products (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        price DECIMAL(10, 2) NOT NULL,
+        stock INTEGER DEFAULT 0,
+        category VARCHAR(50)
+    );
+    
+    -- Create indexes for public schema
+    CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders(user_id);
+    CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
+    CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
+    
+    -- Switch to perf schema
+    SET search_path TO perf;
+    
+    -- Create perf schema tables
+    CREATE TABLE IF NOT EXISTS perf.benchmark_logs (
+        id SERIAL PRIMARY KEY,
+        user_id INT NOT NULL,
+        session_id VARCHAR(100) NOT NULL,
+        action_type VARCHAR(50) NOT NULL,
+        payload TEXT,
+        ip_address VARCHAR(50),
+        user_agent TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        random_value INT,
+        status_code INT
+    );
+    
+    CREATE TABLE IF NOT EXISTS perf.benchmark_events (
+        id SERIAL PRIMARY KEY,
+        event_type VARCHAR(100) NOT NULL,
+        event_data JSONB,
+        source_system VARCHAR(50),
+        correlation_id VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    CREATE TABLE IF NOT EXISTS perf.benchmark_metrics (
+        id SERIAL PRIMARY KEY,
+        metric_name VARCHAR(100) NOT NULL,
+        metric_value DECIMAL(15, 2),
+        tags JSONB,
+        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- Create indexes for perf schema
+    CREATE INDEX IF NOT EXISTS idx_benchmark_logs_user_id ON perf.benchmark_logs(user_id);
+    CREATE INDEX IF NOT EXISTS idx_benchmark_logs_created_at ON perf.benchmark_logs(created_at);
+    CREATE INDEX idx_orders_user_status_created ON orders(user_id, status, created_at DESC);
+    -- For the products ORDER BY price query
+    CREATE INDEX idx_products_price ON products(price DESC);
+    
+    -- For status filtering on orders
+    CREATE INDEX idx_orders_status ON orders(status);
+    -- Create function for generating benchmark data
+    CREATE OR REPLACE FUNCTION perf.generate_benchmark_data(num_rows INT)
+    RETURNS VOID AS $$
+    DECLARE
+        i INT;
+        batch_size INT := 1000;
+        user_ids INT[] := ARRAY[1, 2, 3, 5, 8, 13, 21, 34, 55, 89];
+        action_types TEXT[] := ARRAY['login', 'logout', 'view', 'click', 'purchase', 'search', 'update', 'delete'];
+        status_codes INT[] := ARRAY[200, 201, 400, 401, 403, 404, 500];
+    BEGIN
+        FOR i IN 1..num_rows BY batch_size LOOP
+            INSERT INTO perf.benchmark_logs (
+                user_id,
+                session_id,
+                action_type,
+                payload,
+                ip_address,
+                user_agent,
+                random_value,
+                status_code,
+                created_at
+            )
+            SELECT
+                user_ids[1 + floor(random() * array_length(user_ids, 1))],
+                'session-' || md5(random()::text),
+                action_types[1 + floor(random() * array_length(action_types, 1))],
+                'payload-' || md5(random()::text),
+                '192.168.' || floor(random() * 255) || '.' || floor(random() * 255),
+                'Mozilla/5.0 (X11; Linux x86_64) User-Agent-' || floor(random() * 1000),
+                floor(random() * 1000000),
+                status_codes[1 + floor(random() * array_length(status_codes, 1))],
+                NOW() - (random() * INTERVAL '365 days')
+            FROM generate_series(1, LEAST(batch_size, num_rows - i + 1));
+    
+            IF i % 10000 = 0 THEN
+                RAISE NOTICE 'Inserted % rows...', i;
+            END IF;
+        END LOOP;
+    
+        RAISE NOTICE 'Finished inserting % rows', num_rows;
+    END;
+    $$ LANGUAGE plpgsql;
+
+  02-create-user.sql: |
+    -- Create user and grant permissions
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_user WHERE usename = 'perf_a') THEN
+            CREATE USER perf_a WITH PASSWORD '1234567890';
+        END IF;
+    END
+    $$;
+    
+    -- Grant permissions
+    GRANT USAGE ON SCHEMA perf TO perf_a;
+    GRANT USAGE ON SCHEMA public TO perf_a;
+    
+    -- Grant permissions on all tables
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA perf TO perf_a;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO perf_a;
+    
+    -- Grant sequence permissions
+    GRANT USAGE ON ALL SEQUENCES IN SCHEMA perf TO perf_a;
+    GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO perf_a;
+    
+    -- Set default privileges for future tables
+    ALTER DEFAULT PRIVILEGES IN SCHEMA perf GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO perf_a;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO perf_a;
+    
+    ALTER DEFAULT PRIVILEGES IN SCHEMA perf GRANT USAGE ON SEQUENCES TO perf_a;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE ON SEQUENCES TO perf_a;
+
+  03-load-sample-data.sql: |
+    -- Insert sample data into public schema
+    SET search_path TO public;
+    
+    -- Check if data already exists to avoid duplicates
+    DO $$
+    BEGIN
+        IF (SELECT COUNT(*) FROM perf.users) = 0 THEN
+            -- Insert 1000 users
+            INSERT INTO perf.users (username, email, full_name)
+            SELECT
+                'user' || i,
+                'user' || i || '@example.com',
+                'User ' || i
+            FROM generate_series(1, 1000) AS i;
+            
+            RAISE NOTICE 'Inserted 1000 users';
+        END IF;
+        
+        IF (SELECT COUNT(*) FROM perf.products) = 0 THEN
+            -- Insert 500 products
+            INSERT INTO perf.products (name, description, price, stock, category)
+            SELECT
+                'Product ' || i,
+                'Description for product ' || i,
+                (random() * 500 + 10)::DECIMAL(10, 2),
+                (random() * 1000)::INTEGER,
+                CASE (random() * 4)::INTEGER
+                    WHEN 0 THEN 'electronics'
+                    WHEN 1 THEN 'clothing'
+                    WHEN 2 THEN 'books'
+                    WHEN 3 THEN 'home'
+                    ELSE 'sports'
+                END
+            FROM generate_series(1, 500) AS i;
+            
+            RAISE NOTICE 'Inserted 500 products';
+        END IF;
+        
+        IF (SELECT COUNT(*) FROM perf.orders) = 0 THEN
+            -- Insert 5000 orders
+            INSERT INTO perf.orders (user_id, total_amount, status)
+            SELECT
+                (random() * 999 + 1)::INTEGER,
+                (random() * 1000 + 10)::DECIMAL(10, 2),
+                CASE (random() * 3)::INTEGER
+                    WHEN 0 THEN 'pending'
+                    WHEN 1 THEN 'processing'
+                    WHEN 2 THEN 'completed'
+                    ELSE 'cancelled'
+                END
+            FROM generate_series(1, 5000) AS i;
+            
+            RAISE NOTICE 'Inserted 5000 orders';
+        END IF;
+        
+        IF (SELECT COUNT(*) FROM perf.order_items) = 0 THEN
+            -- Insert 15000 order items
+            INSERT INTO perf.order_items (order_id, product_name, quantity, price)
+            SELECT
+                (random() * 4999 + 1)::INTEGER,
+                'Product ' || (random() * 100 + 1)::INTEGER,
+                (random() * 5 + 1)::INTEGER,
+                (random() * 100 + 5)::DECIMAL(10, 2)
+            FROM generate_series(1, 15000) AS i;
+            
+            RAISE NOTICE 'Inserted 15000 order items';
+        END IF;
+    END
+    $$;
+    
+    -- Generate benchmark data in perf schema
+    DO $$
+    BEGIN
+        IF (SELECT COUNT(*) FROM perf.benchmark_logs) < 100000 THEN
+            -- Generate 100k rows for initial testing (reduced from 900k for faster startup)
+            -- You can increase this later or run manually
+            PERFORM perf.generate_benchmark_data(100000);
+            RAISE NOTICE 'Generated 100000 benchmark log entries';
+        END IF;
+    END
+    $$;
+
+---
+# PersistentVolumeClaim for PostgreSQL data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: perf-test
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi  # Increased storage for benchmark data
+
+---
+# PostgreSQL Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgresql
+  namespace: perf-test
+  labels:
+    app: postgresql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+      - name: postgresql
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: postgres
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: postgres
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        # Performance tuning for PostgreSQL
+        - name: POSTGRES_INITDB_ARGS
+          value: "--encoding=UTF8 --locale=C"
+        - name: POSTGRES_HOST_AUTH_METHOD
+          value: "md5"
+        command:
+          - docker-entrypoint.sh
+          - postgres
+          - -c
+          - shared_buffers=256MB
+          - -c
+          - max_connections=200
+          - -c
+          - effective_cache_size=1GB
+          - -c
+          - maintenance_work_mem=128MB
+          - -c
+          - checkpoint_completion_target=0.9
+          - -c
+          - wal_buffers=16MB
+          - -c
+          - default_statistics_target=100
+          - -c
+          - random_page_cost=1.1
+          - -c
+          - effective_io_concurrency=200
+          - -c
+          - work_mem=4MB
+          - -c
+          - min_wal_size=1GB
+          - -c
+          - max_wal_size=4GB
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: init-scripts
+          mountPath: /docker-entrypoint-initdb.d
+        livenessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - pg_isready -U postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 5
+        readinessProbe:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - pg_isready -U postgres
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 5
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "4000m"
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: init-scripts
+        configMap:
+          name: postgres-init-scripts
+          defaultMode: 0755
+
+---
+# PostgreSQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: perf-test
+  labels:
+    app: postgresql
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgresql
+
+---
+# Optional: NodePort service for external access (for debugging)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql-external
+  namespace: perf-test
+  labels:
+    app: postgresql
+spec:
+  type: NodePort
+  ports:
+  - port: 5432
+    targetPort: 5432
+    nodePort: 30432
+    protocol: TCP
+    name: postgres
+  selector:
+    app: postgresql

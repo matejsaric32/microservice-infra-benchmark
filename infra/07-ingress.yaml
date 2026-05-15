@@ -1,0 +1,101 @@
+---
+# EXTREME HIGH-PERFORMANCE NGINX INGRESS (NO SNIPPETS)
+# Optimized for 67k+ requests/second using only annotations
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spring-perf-ingress
+  namespace: perf-test
+  annotations:
+    # NO SSL - Maximum performance
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+
+    # Minimal timeouts - fail fast
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "2"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-next-upstream-timeout: "0"
+
+    # MASSIVE Keepalive - Critical for high RPS
+    nginx.ingress.kubernetes.io/upstream-keepalive-connections: "10000"
+    nginx.ingress.kubernetes.io/upstream-keepalive-requests: "100000"
+    nginx.ingress.kubernetes.io/upstream-keepalive-timeout: "600"
+
+    # Maximum buffering for throughput
+    nginx.ingress.kubernetes.io/proxy-buffering: "on"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "32k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "16"
+    nginx.ingress.kubernetes.io/client-body-buffer-size: "32k"
+    nginx.ingress.kubernetes.io/proxy-max-temp-file-size: "0"
+
+    # NO LIMITS - Maximum throughput
+    nginx.ingress.kubernetes.io/limit-connections: "0"
+    nginx.ingress.kubernetes.io/limit-rps: "0"
+
+    # Disable logging for performance
+    nginx.ingress.kubernetes.io/enable-access-log: "false"
+
+    # Compression OFF - CPU vs throughput tradeoff
+    nginx.ingress.kubernetes.io/use-gzip: "false"
+
+    # HTTP/2
+    nginx.ingress.kubernetes.io/http2-push-preload: "true"
+
+    # Proxy protocol version
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /spring(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: spring-perf
+                port:
+                  number: 8080
+          - path: /actix(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: actix-perf
+                port:
+                  number: 8080
+          - path: /spring-reactor(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: spring-reactor-perf
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spring-perf
+                port:
+                  number: 8080
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+data:
+  worker-processes: "auto"
+  worker-connections: "65535"
+  max-worker-connections: "65535"
+  keep-alive: "75"
+  keep-alive-requests: "100000"
+  upstream-keepalive-connections: "10000"
+  upstream-keepalive-requests: "100000"
+  upstream-keepalive-timeout: "60"
+  proxy-connect-timeout: "2"
+  proxy-read-timeout: "600"
+  proxy-send-timeout: "600"
+  use-gzip: "false"
+  enable-access-log: "false"
+  max-worker-open-files: "65535"
+  worker-cpu-affinity: "auto"
+

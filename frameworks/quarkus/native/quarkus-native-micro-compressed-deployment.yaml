@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quarkus-perf-micro-compressed
+  namespace: perf-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quarkus-perf
+  template:
+    metadata:
+      labels:
+        app: quarkus-perf
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/q/metrics"
+    spec:
+      containers:
+        - name: quarkus-perf
+          image: localhost/quarkus-perf-native-micro-compressed:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: quarkus-perf-config
+            - secretRef:
+                name: perf-secret
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "2000m"
+            limits:
+              memory: "256Mi"
+              cpu: "4000m"
+          livenessProbe:
+            httpGet:
+              path: /q/health/live
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /q/health/ready
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 1
+            timeoutSeconds: 2
+            failureThreshold: 60
