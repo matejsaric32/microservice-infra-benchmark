@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
         - name: spring-perf
-          image: localhost/spring-perf:latest
-          imagePullPolicy: Never
+          image: ghcr.io/matejsaric32/spring-perf:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           envFrom:

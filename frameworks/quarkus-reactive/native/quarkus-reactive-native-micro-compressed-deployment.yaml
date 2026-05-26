@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
         - name: quarkus-reactive-perf
-          image: localhost/quarkus-reactive-perf-native-micro-compressed:latest
-          imagePullPolicy: Never
+          image: ghcr.io/matejsaric32/quarkus-reactive-perf-native-micro-compressed:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           envFrom:

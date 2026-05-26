@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: actix-perf
-          image: localhost/actix-perf:latest
-          imagePullPolicy: Never
+          image: ghcr.io/matejsaric32/actix-perf:latest
+          imagePullPolicy: IfNotPresent
           workingDir: /app
           ports:
             - containerPort: 8080

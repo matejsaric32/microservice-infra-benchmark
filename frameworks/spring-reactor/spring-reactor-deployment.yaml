@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
         - name: spring-reactor-perf
-          image: localhost/spring-reactive-perf:latest
-          imagePullPolicy: Never
+          image: ghcr.io/matejsaric32/spring-reactive-perf:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           envFrom:

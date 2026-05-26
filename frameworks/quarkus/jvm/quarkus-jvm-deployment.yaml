@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
         - name: quarkus-perf-jvm
-          image: localhost/quarkus-perf-jvm:latest
-          imagePullPolicy: Never
+          image: ghcr.io/matejsaric32/quarkus-perf-jvm:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           envFrom:

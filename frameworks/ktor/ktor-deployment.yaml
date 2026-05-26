@@ -15,8 +15,8 @@ spec:
     spec:
       containers:
         - name: ktor-perf
-          image: localhost/ktor-perf:latest
-          imagePullPolicy: Never
+          image: ghcr.io/matejsaric32/ktor-perf:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           command: ["java", "-jar", "app.jar", "-config=/app/application.yaml"]
