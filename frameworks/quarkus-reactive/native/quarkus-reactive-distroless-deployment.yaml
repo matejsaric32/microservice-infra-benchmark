@@ -7,18 +7,18 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: quarkus-reactive-perf
+      app: quarkus-reactive-perf-distroless
   template:
     metadata:
       labels:
-        app: quarkus-reactive-perf
+        app: quarkus-reactive-perf-distroless
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8080"
         prometheus.io/path: "/q/metrics"
     spec:
       containers:
-        - name: quarkus-reactive-perf
+        - name: quarkus-reactive-perf-distroless
           image: ghcr.io/matejsaric32/quarkus-reactive-perf-distroless:latest
           imagePullPolicy: IfNotPresent
           ports:
@@ -39,13 +39,13 @@ spec:
             httpGet:
               path: /q/health/live
               port: 8080
-            initialDelaySeconds: 1
-            periodSeconds: 1
-            timeoutSeconds: 1
-            failureThreshold: 1
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /q/health/ready
+              path: /q/health/live
               port: 8080
             initialDelaySeconds: 0
             periodSeconds: 1

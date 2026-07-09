@@ -1,47 +1,103 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# S2 — Startup latency measurement (feeds S5_stats.py --value startup_s)
+#
+# Definition used: pod creation -> Ready condition.
+# Implemented as: wall clock from issuing `scale --replicas=1` until the pod's
+# Ready condition becomes True, observed via kubectl's watch (not polling).
+#
+# The deployment is scaled to 0 and back to 1 each run, so the container image
+# is already present on the node: this measures scheduling + container create +
+# application init, NOT image pull. State that in §3.3.
+#
+# Emits: framework,run,startup_s,api_startup_s,pod
+#   startup_s     — wall clock, millisecond resolution (report this)
+#   api_startup_s — Kubernetes creationTimestamp -> Ready lastTransitionTime.
+#                   ONE SECOND RESOLUTION. Cross-check only; never report.
+#
+# Usage: ./S2_startup_measure.sh <deployment> [N]
+set -euo pipefail
 
 FRAMEWORK="${1:-quarkus-reactive-perf-distroless}"
-MIN_REPLICAS="${2:-1}"
-MAX_REPLICAS="${3:-10}"
-NAMESPACE="perf-test"
+N="${2:-10}"
+NAMESPACE="${NAMESPACE:-perf-test}"
+OUT="${OUT:-startup_runs_${FRAMEWORK}.csv}"
+SETTLE="${SETTLE:-10}"      # seconds at zero replicas before each run
+DEADLINE="${DEADLINE:-330}" # hard per-run cap, seconds
 
-echo -e "\e[33m=== Scale Test: $FRAMEWORK ===\e[0m"
+command -v kubectl >/dev/null || { echo "kubectl not found" >&2; exit 1; }
 
-kubectl scale deployment "$FRAMEWORK" -n "$NAMESPACE" --replicas="$MIN_REPLICAS"
-kubectl wait --for=condition=ready pod -l "app=$FRAMEWORK" -n "$NAMESPACE" --timeout=300s
-echo -e "\e[36mStarting state: $MIN_REPLICAS replica(s) ready\e[0m"
+kubectl -n "$NAMESPACE" get deploy "$FRAMEWORK" >/dev/null 2>&1 || {
+  echo "no deployment '$FRAMEWORK' in namespace '$NAMESPACE'" >&2; exit 1; }
 
-echo -e "\n\e[33m>>> Scaling UP: $MIN_REPLICAS -> $MAX_REPLICAS\e[0m"
-START_UP=$(date +%s%3N)
+# Derive the pod selector from the deployment rather than assuming app=<name>.
+SELECTOR=$(kubectl -n "$NAMESPACE" get deploy "$FRAMEWORK" \
+  -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}' \
+  | sed 's/,$//')
+[[ -n "$SELECTOR" ]] || { echo "deployment has no matchLabels selector" >&2; exit 1; }
+echo "selector: $SELECTOR"
 
-kubectl scale deployment "$FRAMEWORK" -n "$NAMESPACE" --replicas="$MAX_REPLICAS"
-kubectl wait --for=condition=ready pod -l "app=$FRAMEWORK" -n "$NAMESPACE" --timeout=300s
+# Fail fast if the selector resolves to nothing while the deployment is up.
+kubectl -n "$NAMESPACE" scale deploy "$FRAMEWORK" --replicas=1 >/dev/null
+sleep 3
+kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" --no-headers 2>/dev/null | grep -q . || {
+  echo "selector '$SELECTOR' matches no pods — aborting rather than hanging" >&2; exit 1; }
 
-END_UP=$(date +%s%3N)
-SCALE_UP_TIME=$((END_UP - START_UP))
-echo -e "\e[32mScale UP completed in ${SCALE_UP_TIME}ms\e[0m"
+[[ -f "$OUT" ]] || echo "framework,run,startup_s,api_startup_s,pod" > "$OUT"
 
-READY_PODS=$(kubectl get pods -l "app=$FRAMEWORK" -n "$NAMESPACE" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
-echo -e "\e[36mRunning pods: $READY_PODS\e[0m"
+pods_exist() {
+  kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" --no-headers 2>/dev/null | grep -q .
+}
 
-echo -e "\n\e[33m>>> Scaling DOWN: $MAX_REPLICAS -> $MIN_REPLICAS\e[0m"
-START_DOWN=$(date +%s%3N)
+wait_scaled_to_zero() {
+  local deadline=$((SECONDS + 120))
+  while pods_exist; do
+    (( SECONDS < deadline )) || { echo "timeout draining $FRAMEWORK" >&2; return 1; }
+    sleep 0.5
+  done
+}
 
-kubectl scale deployment "$FRAMEWORK" -n "$NAMESPACE" --replicas="$MIN_REPLICAS"
+echo "=== Startup: $FRAMEWORK, $N runs, ns=$NAMESPACE ==="
 
-while true; do
-    CURRENT_PODS=$(kubectl get pods -l "app=$FRAMEWORK" -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l)
-    if [ "$CURRENT_PODS" -le "$MIN_REPLICAS" ]; then break; fi
-    sleep 1
+for i in $(seq 1 "$N"); do
+  printf 'run %d/%d: draining... ' "$i" "$N"
+  kubectl -n "$NAMESPACE" scale deploy "$FRAMEWORK" --replicas=0 >/dev/null
+  wait_scaled_to_zero
+  sleep "$SETTLE"
+  printf 'starting... '
+
+  T0=$(date +%s%N)
+  kubectl -n "$NAMESPACE" scale deploy "$FRAMEWORK" --replicas=1 >/dev/null
+
+  # `kubectl wait` errors immediately if the pod object does not exist yet, so
+  # retry until it latches on. Once it does, it uses a watch — the return is
+  # event-driven, not poll-quantized.
+  run_deadline=$((SECONDS + DEADLINE))
+  until kubectl -n "$NAMESPACE" wait --for=condition=Ready \
+          pod -l "$SELECTOR" --timeout=300s >/dev/null 2>&1; do
+    (( SECONDS < run_deadline )) || { echo; echo "run $i: never became Ready" >&2; exit 1; }
+    sleep 0.05
+  done
+  T1=$(date +%s%N)
+
+  STARTUP_S=$(awk -v a="$T0" -v b="$T1" 'BEGIN{printf "%.3f", (b-a)/1e9}')
+
+  POD=$(kubectl -n "$NAMESPACE" get pod -l "$SELECTOR" \
+          -o jsonpath='{.items[0].metadata.name}')
+  CREATED=$(kubectl -n "$NAMESPACE" get pod "$POD" \
+          -o jsonpath='{.metadata.creationTimestamp}')
+  READY_AT=$(kubectl -n "$NAMESPACE" get pod "$POD" \
+          -o jsonpath='{.status.conditions[?(@.type=="Ready")].lastTransitionTime}')
+
+  if [[ -n "$CREATED" && -n "$READY_AT" ]]; then
+    API_S=$(( $(date -d "$READY_AT" +%s) - $(date -d "$CREATED" +%s) ))
+  else
+    API_S="NaN"
+  fi
+
+  printf 'ready\n'
+  echo "$FRAMEWORK,$i,$STARTUP_S,$API_S,$POD" | tee -a "$OUT"
 done
 
-kubectl wait --for=condition=ready pod -l "app=$FRAMEWORK" -n "$NAMESPACE" --timeout=60s
-
-END_DOWN=$(date +%s%3N)
-SCALE_DOWN_TIME=$((END_DOWN - START_DOWN))
-echo -e "\e[32mScale DOWN completed in ${SCALE_DOWN_TIME}ms\e[0m"
-
-echo -e "\n\e[36m=== RESULTS ===\e[0m"
-echo "Framework:  $FRAMEWORK"
-echo "Scale UP:   ${SCALE_UP_TIME}ms ($MIN_REPLICAS -> $MAX_REPLICAS)"
-echo "Scale DOWN: ${SCALE_DOWN_TIME}ms ($MAX_REPLICAS -> $MIN_REPLICAS)"
+echo
+echo "Wrote $OUT. Next:"
+echo "  python3 S5_stats.py $OUT --group framework --value startup_s"

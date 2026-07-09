@@ -7,18 +7,19 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: quarkus-perf
+      app: quarkus-perf-micro-compressed
   template:
     metadata:
       labels:
-        app: quarkus-perf
+        app: quarkus-perf-micro-compressed
+        variant: micro-compressed
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8080"
         prometheus.io/path: "/q/metrics"
     spec:
       containers:
-        - name: quarkus-perf
+        - name: quarkus-perf-micro-compressed
           image: ghcr.io/matejsaric32/quarkus-perf-native-micro-compressed:latest
           imagePullPolicy: IfNotPresent
           ports:
@@ -33,7 +34,7 @@ spec:
               memory: "256Mi"
               cpu: "2000m"
             limits:
-              memory: "256Mi"
+              memory: "1Gi"
               cpu: "4000m"
           livenessProbe:
             httpGet:
@@ -45,7 +46,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /q/health/ready
+              path: /q/health/live
               port: 8080
             initialDelaySeconds: 0
             periodSeconds: 1
