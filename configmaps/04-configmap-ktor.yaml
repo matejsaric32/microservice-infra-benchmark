@@ -27,10 +27,6 @@ data:
         poolName: "KtorPerfPool"
         autoCommit: true
         connectionTestQuery: "SELECT 1"
-    redis:
-      host: "redis"
-      port: 6379
-      ttl: 300
     kafka:
       brokers: "kafka:9092"
       topic: "order-events"

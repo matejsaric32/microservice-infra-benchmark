@@ -16,7 +16,7 @@ spec:
       containers:
         - name: actix-perf
           image: ghcr.io/matejsaric32/actix-perf:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           workingDir: /app
           ports:
             - containerPort: 8080
@@ -36,6 +36,20 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            failureThreshold: 3
       volumes:
         - name: config
           configMap:

@@ -16,7 +16,7 @@ spec:
       containers:
         - name: ktor-perf
           image: ghcr.io/matejsaric32/ktor-perf:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           command: ["java", "-jar", "app.jar", "-config=/app/application.yaml"]
@@ -33,20 +33,18 @@ spec:
               cpu: "1000m"
           livenessProbe:
             httpGet:
-              path: /health
+              path: /live
               port: 8080
-            initialDelaySeconds: 30
+            initialDelaySeconds: 0
             periodSeconds: 10
-            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /health
               port: 8080
             initialDelaySeconds: 0
-            periodSeconds: 1
-            timeoutSeconds: 2
-            failureThreshold: 60
+            periodSeconds: 10
+            failureThreshold: 3
       volumes:
         - name: config
           configMap:

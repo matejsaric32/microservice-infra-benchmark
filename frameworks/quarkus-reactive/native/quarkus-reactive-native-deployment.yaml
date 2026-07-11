@@ -20,7 +20,7 @@ spec:
       containers:
         - name: quarkus-reactive-perf-native
           image: ghcr.io/matejsaric32/quarkus-reactive-perf-native:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           envFrom:
@@ -39,15 +39,13 @@ spec:
             httpGet:
               path: /q/health/live
               port: 8080
-            initialDelaySeconds: 30
+            initialDelaySeconds: 0
             periodSeconds: 10
-            timeoutSeconds: 5
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /q/health/live
+              path: /q/health/ready
               port: 8080
             initialDelaySeconds: 0
-            periodSeconds: 1
-            timeoutSeconds: 2
-            failureThreshold: 60
+            periodSeconds: 10
+            failureThreshold: 3
