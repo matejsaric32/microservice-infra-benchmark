@@ -3,6 +3,60 @@
 Empirical benchmark of microservice frameworks across JVM, GraalVM Native Image, and Rust in containerized Kubernetes
 environments (k3s).
 
+> **Reproducibility companion.** This repository contains the complete cluster configuration, deployment manifests,
+> and measurement scripts (Supplements S1–S3) for the paper *"Empirical Static and Infrastructure Evaluation of
+> Microservice Frameworks Across JVM, GraalVM Native Image, and Rust in Containerized Environments"*. The Quick Start
+> below reproduces the exact test environment used for all reported measurements.
+
+---
+
+## Quick Start (paper environment)
+
+The reported measurements were collected on a **single bare-metal node** with the following configuration:
+
+| Parameter          | Value                                              |
+|--------------------|----------------------------------------------------|
+| OS                 | Fedora Workstation 42 (cgroups v2)                 |
+| Kubernetes         | K3s v1.35.5 (single node, embedded containerd)     |
+| Container build    | Podman 5.7.0 (images pre-built, pushed to GHCR)    |
+| CPU / RAM / Disk   | AMD Ryzen 9 9950X3D · 64 GB DDR5 · 2 TB NVMe SSD   |
+| Resource profile   | Every framework pod: 1 GiB memory / 1 CPU limit    |
+| JVM                | Amazon Corretto 21 (default ergonomics, no flags)  |
+| GraalVM            | Mandrel 24.2.2.0-Final (default Serial GC)         |
+| Rust               | 1.89.0                                             |
+
+```bash
+# 1. Install the pinned K3s version
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="v1.35.5+k3s1" sh -
+
+# 2. Configure kubectl
+mkdir -p ~/.kube && sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+sudo chown $USER:$USER ~/.kube/config && export KUBECONFIG=~/.kube/config
+
+# 3. Deploy everything (namespace, infra, configmaps, monitoring, ingress, frameworks)
+sudo bash setup-cluster.sh
+
+# 4. Verify — all pods Ready (readiness = deep health check incl. PostgreSQL + Kafka)
+kubectl get pods -n perf-test
+
+# 5. Reproduce the paper's measurements
+bash scripts/S2_startup_measure.sh quarkus-perf-native        # startup (Table 2)
+bash scripts/S1_scale_test.sh quarkus-perf-native 1 10        # scaling (Table 4)
+k6 run -e FRAMEWORK=quarkus-native -e RPS=100 scripts/S6_load.js  # iso-load (Table 8)
+```
+
+To confirm the cgroup configuration on your node: `sudo crictl info | grep -i cgroup`
+(the paper environment ran cgroups v2; memory metrics follow cgroups v2 accounting as exposed by cAdvisor).
+
+**Measurement notes (as used in the paper):**
+
+- All container images were **pre-pulled** to the node before startup/scaling measurements — reported times exclude
+  image pull time.
+- Readiness probes are **deep health checks**: Spring Boot Actuator, Quarkus SmallRye Health, and custom endpoints
+  for Ktor and Actix Web, all verifying PostgreSQL and Kafka connectivity (see probe paths under Troubleshooting).
+- Database connection pools are configured for **eager initialization** in every framework.
+- No JVM heap or GC flags are set anywhere: JDK 21 container-aware ergonomics apply (Serial GC under the 1-CPU limit).
+
 ---
 
 ## Frameworks Benchmarked
@@ -53,7 +107,7 @@ microservice-infra-benchmark/
 │   └── 04-configmap-actix.yaml
 │
 ├── frameworks/
-│   ├── spring/                         # Spring Boot deployment + service
+│   ├── spring/                         # Spring Boot deployment + service (incl. readiness probe)
 │   ├── spring-reactor/                 # Spring WebFlux deployment + service
 │   ├── ktor/                           # Ktor deployment + service
 │   ├── rust/                           # Actix-Web deployment + service
@@ -70,10 +124,11 @@ microservice-infra-benchmark/
 │
 └── scripts/
     ├── setup-cluster.sh                # Full cluster setup script
-    ├── S1_scale_test.sh                # Scale up/down test (bash)
+    ├── S1_scale_test.sh                # Supplement S1 — scale up/down test (bash)
     ├── S1_scale_test.ps1               # Scale up/down test (PowerShell)
-    ├── S2_startup_measure.sh           # Startup time measurement (bash)
-    └── S2_startup_measure.ps1          # Startup time measurement (PowerShell)
+    ├── S2_startup_measure.sh           # Supplement S2 — startup time measurement (bash)
+    ├── S2_startup_measure.ps1          # Startup time measurement (PowerShell)
+    └── S6_load.js                      # Supplement S3 — k6 iso-load test (100 RPS)
 ```
 
 ---
@@ -94,23 +149,29 @@ microservice-infra-benchmark/
 
 ## Ingress Routing
 
-All frameworks are accessible via NGINX ingress:
+All frameworks are accessible via NGINX ingress (paths used by the S6 iso-load test):
 
-| Path              | Service                    |
-|-------------------|----------------------------|
-| `/spring`         | spring-perf:8080           |
-| `/actix`          | actix-perf:8080            |
-| `/spring-reactor` | spring-reactor-perf:8080   |
-| `/`               | spring-perf:8080 (default) |
+| Path                       | Service                           |
+|----------------------------|-----------------------------------|
+| `/spring`                  | spring-perf:8080                  |
+| `/spring-reactor`          | spring-reactor-perf:8080          |
+| `/ktor`                    | ktor-perf:8080                    |
+| `/actix`                   | actix-perf:8080                   |
+| `/quarkus-jvm`             | quarkus-perf-jvm:8080             |
+| `/quarkus-native`          | quarkus-perf-native:8080          |
+| `/quarkus-reactive-jvm`    | quarkus-reactive-perf-jvm:8080    |
+| `/quarkus-reactive-native` | quarkus-reactive-perf-native:8080 |
+| `/`                        | spring-perf:8080 (default)        |
 
 ---
 
 ## Prerequisites
 
-- Fedora Linux (or any Linux distro)
-- k3s installed
+- Fedora Linux (or any Linux distro with cgroups v2)
+- k3s installed (v1.35.5 used for the paper — see Quick Start)
 - `kubectl` configured
 - Container images pushed to `ghcr.io/matejsaric32/`
+- `k6` (for the S6 load test): https://k6.io/docs/get-started/installation/
 - At least 8GB RAM recommended
 
 ---
@@ -120,7 +181,7 @@ All frameworks are accessible via NGINX ingress:
 ### 1. Install k3s
 
 ```bash
-curl -sfL https://get.k3s.io | sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="v1.35.5+k3s1" sh -
 ```
 
 Set up kubeconfig:
@@ -200,9 +261,11 @@ kubectl get pods -n perf-test -w
 
 ## Running Benchmark Scripts
 
-### Scale Test
+The three scripts below correspond to Supplements S1–S3 of the paper.
 
-Tests how fast a framework scales up and down:
+### Scale Test (Supplement S1)
+
+Tests how fast a framework scales up and down (paper Section 3.3.4, Table 4):
 
 ```bash
 # bash
@@ -215,9 +278,10 @@ bash scripts/S1_scale_test.sh quarkus-reactive-perf-distroless 1 10
 .\scripts\S1_scale_test.ps1 -Framework quarkus-perf-jvm -Runs 10
 ```
 
-### Startup Time Measurement
+### Startup Time Measurement (Supplement S2)
 
-Measures how long a pod takes from scheduled to ready:
+Measures how long a pod takes from scheduled to ready — readiness includes the deep health check
+(PostgreSQL + Kafka connectivity), see paper Section 3.3.2 (Table 2):
 
 ```bash
 # bash
@@ -226,6 +290,26 @@ bash scripts/S2_startup_measure.sh <framework-name>
 # PowerShell
 .\scripts\S2_startup_measure.ps1 -Framework quarkus-perf-jvm -Runs 10
 ```
+
+> **Note:** pre-pull all images before measuring so results exclude image pull time
+> (`kubectl apply` once and wait for Ready, or `sudo k3s crictl pull <image>`).
+
+### Iso-Load Test (Supplement S3)
+
+Fixed-rate load test (paper Sections 3.3.5 and 4.5, Table 8): k6 `constant-arrival-rate`,
+100 RPS, 60 s warm-up (discarded) + 180 s measured window, routed through the NGINX ingress.
+The endpoint reads one row from PostgreSQL by primary key (random ID 1–1000), publishes a Kafka
+event and awaits the broker acknowledgment, then returns JSON.
+
+```bash
+# one framework (uses ingress path /<FRAMEWORK>)
+k6 run -e TARGET=http://<node-ip> -e FRAMEWORK=quarkus-native -e RPS=100 scripts/S6_load.js
+
+# output: s6_<framework>.csv with p50/p95/p99 latency, error rate, achieved RPS
+```
+
+Memory and CPU during the measured window are read from Prometheus/Grafana
+(`container_memory_working_set_bytes`, `rate(container_cpu_usage_seconds_total[1m])`).
 
 Available framework names:
 
@@ -380,14 +464,16 @@ kill %1
 
 ### Readiness probe failing with 404
 
-The probe path is wrong. Check the framework's health endpoint:
+The probe path is wrong. Check the framework's health endpoint — note that all health endpoints are
+**deep checks** that verify PostgreSQL and Kafka connectivity, so a pod is Ready only once its
+infrastructure connections are established:
 
-| Framework   | Health Path        |
-|-------------|--------------------|
-| Ktor        | `/health`          |
-| Spring Boot | `/actuator/health` |
-| Quarkus     | `/q/health/ready`  |
-| Actix       | `/health`          |
+| Framework   | Health Path        | Implementation        |
+|-------------|--------------------|-----------------------|
+| Spring Boot | `/actuator/health` | Spring Boot Actuator  |
+| Quarkus     | `/q/health/ready`  | SmallRye Health       |
+| Ktor        | `/health`          | custom (DB + Kafka)   |
+| Actix       | `/health`          | custom (DB + Kafka)   |
 
 ### Connection refused on startup
 
@@ -457,6 +543,8 @@ kubectl get nodes
 - Default login: anonymous (admin access enabled)
 - Pre-loaded dashboard: `Perf Test - Memory & CPU Metrics`
 - Metrics: container memory (working set, RSS, cache) and CPU usage
+- Note: under cgroups v2, `container_memory_rss` reports anonymous memory only (heap/stacks),
+  not the classic process RSS
 
 **Prometheus** scrapes metrics every 5 seconds from:
 
@@ -464,6 +552,21 @@ kubectl get nodes
 - cAdvisor for container CPU/memory
 
 **Kafka UI** is available at `http://<node-ip>:30880`
+
+---
+
+## Related Repositories (framework source code)
+
+| Framework        | Repository                                              |
+|------------------|---------------------------------------------------------|
+| Spring Boot      | https://github.com/matejsaric32/spring-perf              |
+| Spring WebFlux   | https://github.com/matejsaric32/spring-reactor-perf      |
+| Ktor             | https://github.com/matejsaric32/ktor-perf                |
+| Quarkus          | https://github.com/matejsaric32/quarkus-perf             |
+| Quarkus Reactive | https://github.com/matejsaric32/quarkus-reactive-perf    |
+| Actix Web        | https://github.com/matejsaric32/perf-actix               |
+
+Pre-built container images for all variants are published to GitHub Container Registry (`ghcr.io/matejsaric32/`).
 
 ---
 
