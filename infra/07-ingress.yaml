@@ -59,6 +59,13 @@ spec:
                 name: spring-perf
                 port:
                   number: 8080
+          - path: /spring-reactor(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: spring-reactor-perf
+                port:
+                  number: 8080
           - path: /actix(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
@@ -66,11 +73,39 @@ spec:
                 name: actix-perf
                 port:
                   number: 8080
-          - path: /spring-reactor(/|$)(.*)
+          - path: /ktor(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
-                name: spring-reactor-perf
+                name: ktor-perf
+                port:
+                  number: 8080
+          - path: /quarkus-jvm(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: quarkus-perf-jvm
+                port:
+                  number: 8080
+          - path: /quarkus-native(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: quarkus-perf-native
+                port:
+                  number: 8080
+          - path: /quarkus-reactive-jvm(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: quarkus-reactive-perf-jvm
+                port:
+                  number: 8080
+          - path: /quarkus-reactive-native(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: quarkus-reactive-perf-native
                 port:
                   number: 8080
           - path: /
@@ -102,4 +137,6 @@ data:
   enable-access-log: "false"
   max-worker-open-files: "65535"
   worker-cpu-affinity: "auto"
+
+  time-buckets: "0.001,0.002,0.005,0.01,0.025,0.05,0.1,0.25,0.5,1"
 

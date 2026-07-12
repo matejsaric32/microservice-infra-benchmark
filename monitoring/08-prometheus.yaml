@@ -50,6 +50,64 @@ data:
             action: drop
             regex: ^$
 
+      # ─────────────────────────────────────────────────────────────
+      # NGINX Ingress controller metrics (S6 cross-check observer)
+      # Exposes nginx_ingress_controller_request_duration_seconds_* and
+      # nginx_ingress_controller_requests on port 10254. We target the
+      # controller pod IP directly, so no containerPort/annotation on the
+      # controller is required (metrics are enabled by default).
+      # ─────────────────────────────────────────────────────────────
+      - job_name: 'nginx-ingress'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [ingress-nginx]
+        relabel_configs:
+          # keep only the ingress controller pod(s)
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            action: keep
+            regex: controller
+          # scrape podIP:10254 regardless of declared containerPorts
+          - source_labels: [__meta_kubernetes_pod_ip]
+            action: replace
+            regex: (.+)
+            replacement: ${1}:10254
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+
+      # ─────────────────────────────────────────────────────────────
+      # Application pods that opt in via prometheus.io/scrape annotation.
+      # Picks up the framework actuator/metrics endpoints (spring, quarkus,
+      # etc.) — they already carry the annotations in their deployments.
+      # ─────────────────────────────────────────────────────────────
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [perf-test]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
 ---
 apiVersion: apps/v1
 kind: Deployment
