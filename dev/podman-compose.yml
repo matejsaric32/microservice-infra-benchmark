@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: docker.io/library/postgres:16
+    container_name: perf-postgres
+    environment:
+      POSTGRES_USER: perf_a
+      POSTGRES_PASSWORD: "1234567890"
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro,Z
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U perf_a -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  kafka:
+    image: docker.io/apache/kafka:3.8.1
+    container_name: perf-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      # --- KRaft single-node (broker + controller) ---
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      # --- single-node replication settings ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # auto-creates `order-events` the first time Quarkus produces to it
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+
+volumes:
+  pgdata:
+  kafkadata:

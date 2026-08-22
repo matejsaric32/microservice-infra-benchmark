@@ -313,6 +313,18 @@ apply_frameworks() {
     fi
   done
 
+  # Direct NodePort Services for the long-lived connection sweep (S9/S10).
+  # Applied after the frameworks so the Services exist from the start; they sit
+  # alongside the ClusterIP Services and change nothing for S6-S8.
+  if compgen -G "$ROOT_DIR/longconn/nodeport-*.yaml" >/dev/null; then
+    for f in "$ROOT_DIR"/longconn/nodeport-*.yaml; do   # the .tpl template is not matched
+      $KUBECTL apply -f "$f"
+    done
+    info "Direct NodePort Services applied (kubectl -n $NAMESPACE get svc -l longconn=true)."
+  else
+    warn "  longconn/ not found, skipping direct NodePort Services."
+  fi
+
   success "Framework deployments applied."
 }
 

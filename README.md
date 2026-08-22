@@ -43,6 +43,7 @@ kubectl get pods -n perf-test
 bash scripts/S2_startup_measure.sh quarkus-perf-native        # startup (Table 2)
 bash scripts/S1_scale_test.sh quarkus-perf-native 1 10        # scaling (Table 4)
 k6 run -e FRAMEWORK=quarkus-native -e RPS=100 scripts/S6_load.js  # iso-load (Table 8)
+./scripts/S10_longconn_with_metrics.sh quarkus-native quarkus-perf-native 31095 3  # connection sweep
 ```
 
 To confirm the cgroup configuration on your node: `sudo crictl info | grep -i cgroup`
@@ -118,6 +119,10 @@ microservice-infra-benchmark/
 │       ├── jvm/                        # Quarkus Reactive JVM
 │       └── native/                     # Quarkus Reactive Native variants
 │
+├── longconn/
+│   ├── nodeport-template.yaml.tpl      # template + NodePort allocation notes
+│   └── nodeport-<framework>.yaml       # direct NodePort Service per framework (S9/S10)
+│
 ├── monitoring/
 │   ├── 08-prometheus.yaml              # Prometheus + RBAC
 │   └── 09-grafana.yaml                 # Grafana + dashboards
@@ -128,7 +133,13 @@ microservice-infra-benchmark/
     ├── S1_scale_test.ps1               # Scale up/down test (PowerShell)
     ├── S2_startup_measure.sh           # Supplement S2 — startup time measurement (bash)
     ├── S2_startup_measure.ps1          # Startup time measurement (PowerShell)
-    └── S6_load.js                      # Supplement S3 — k6 iso-load test (100 RPS)
+    ├── S5_stats.py                     # Supplement S5 — mean/SD/95% CI + Mann-Whitney
+    ├── S6_load.js                      # Supplement S3 — k6 iso-load test (100 RPS, /io/light)
+    ├── S7_load.js                      # k6 CPU-bound iso-load (/compute)
+    ├── S7_load_with_metrics.sh         # S6 + Prometheus CPU/memory over the measured window
+    ├── S8_load_with_metrics.sh         # S7 + Prometheus CPU/memory over the measured window
+    ├── S9_longconn.js                  # k6 long-lived connection sweep (/noop, direct NodePort)
+    └── S10_longconn_with_metrics.sh    # S9 sweep + Prometheus CPU/memory per connection level
 ```
 
 ---
@@ -162,6 +173,38 @@ All frameworks are accessible via NGINX ingress (paths used by the S6 iso-load t
 | `/quarkus-reactive-jvm`    | quarkus-reactive-perf-jvm:8080    |
 | `/quarkus-reactive-native` | quarkus-reactive-perf-native:8080 |
 | `/`                        | spring-perf:8080 (default)        |
+
+### Direct NodePort Routing (long-lived connection sweep only)
+
+The long-lived connection sweep (S9/S10) does **not** go through the ingress: a keep-alive
+connection opened against NGINX terminates on the ingress controller, which then serves the
+request from its own upstream pool, so the pod would see a few hundred connections no matter
+how many the client opens. Each framework therefore also has a `NodePort` Service in
+`longconn/`, where kube-proxy performs DNAT only and the connection is established end-to-end
+with the application process (pod connections == k6 VUs).
+
+| NodePort | Service                              | Framework label            |
+|----------|--------------------------------------|----------------------------|
+| 31090    | spring-perf-direct                   | `spring`                   |
+| 31091    | spring-reactor-perf-direct           | `spring-reactor`           |
+| 31092    | actix-perf-direct                    | `actix`                    |
+| 31093    | ktor-perf-direct                     | `ktor`                     |
+| 31094    | quarkus-perf-jvm-direct              | `quarkus-jvm`              |
+| 31095    | quarkus-perf-native-direct           | `quarkus-native`           |
+| 31096    | quarkus-reactive-perf-jvm-direct     | `quarkus-reactive-jvm`     |
+| 31097    | quarkus-reactive-perf-native-direct  | `quarkus-reactive-native`  |
+
+Reserved for the image variants that are not deployed by default: 31098 `quarkus-perf-native-micro`,
+31099 `quarkus-perf-native-micro-compressed`, 31100 `quarkus-perf-distroless`,
+31101 `quarkus-reactive-perf-native-micro`, 31102 `quarkus-reactive-perf-native-micro-compressed`,
+31103 `quarkus-reactive-perf-distroless`. Copy `longconn/nodeport-template.yaml.tpl`, substitute
+`__APP__`/`__PORT__`, and record the port here.
+
+```bash
+kubectl apply -f longconn/                       # applied by setup-cluster.sh as well
+kubectl -n perf-test get svc -l longconn=true
+curl -s http://localhost:31090/noop              # note: no /<framework> path prefix
+```
 
 ---
 
@@ -310,6 +353,67 @@ k6 run -e TARGET=http://<node-ip> -e FRAMEWORK=quarkus-native -e RPS=100 scripts
 
 Memory and CPU during the measured window are read from Prometheus/Grafana
 (`container_memory_working_set_bytes`, `rate(container_cpu_usage_seconds_total[1m])`).
+
+### Long-Lived Connection Sweep (S9 / S10)
+
+Robustness arm: instead of holding the request rate fixed and asking what the runtime costs per
+unit of work, this holds the *work* near zero and asks what it costs per **open connection**.
+A fixed population of HTTP keep-alive connections is held against `/noop` — a constant body, no
+I/O — so the only variable left is connection state: thread stacks and per-connection buffers on
+a thread-per-request server versus event-loop registrations on a reactive one. Requires no change
+to any application image; `/noop` already exists in all of them.
+
+`S9_longconn.js` is the k6 scenario for one connection level (`ramping-vus`, one TCP connection
+per VU, one request per connection every `THINK_S` seconds). `S10_longconn_with_metrics.sh`
+sweeps the levels: for each level it restarts the pod cold, runs S9, and queries Prometheus over
+exactly the k6 measured window.
+
+```bash
+# one level by hand (direct NodePort, no /<framework> prefix in the URL)
+k6 run -e TARGET=http://localhost:31090 -e FRAMEWORK=spring -e CONNS=500 scripts/S9_longconn.js
+
+# full sweep with server-side CPU/memory: <framework-label> <deployment> <nodePort> [reps]
+./scripts/S10_longconn_with_metrics.sh spring spring-perf 31090 3
+
+# custom levels / timing
+LEVELS="0 100 500 1000 2000 5000" REPS=3 K6_CPUS=16-31 \
+  ./scripts/S10_longconn_with_metrics.sh actix actix-perf 31092
+```
+
+Output: `s10_longconn_<framework>.csv`, one row per level per replicate —
+
+```
+framework,conns,run,p50_ms,p95_ms,p99_ms,err_pct,mean_conn_ms,max_conn_ms,measured_reqs,
+achieved_rps,max_vus,est_conns_host,cpu_avg_cores,cpu_max_cores,mem_avg_mib,mem_max_mib,pod,k6_exit
+```
+
+The per-connection cost is the slope of `mem_avg_mib` against `conns`, with `conns=0` (an idle
+pod, timed identically) as the baseline. The environment is recorded alongside it in
+`s10_longconn_env_<framework>.txt`.
+
+**Validity columns.** A framework that silently refuses connections above some cap produces a
+flat memory curve that reads as efficiency, so three checks travel with every row:
+
+| Column           | Expected                | Meaning if violated                                              |
+|------------------|-------------------------|------------------------------------------------------------------|
+| `mean_conn_ms`   | 0.000                   | connections are being re-established, not held — arm is invalid   |
+| `max_vus`        | == `conns`              | the client never reached the target population                    |
+| `est_conns_host` | `conns` + 1             | the kernel's own count of ESTABLISHED sockets to the NodePort (the extra one is k6's `setup()` preflight) |
+
+**Configuration that must be pinned and reported** (defaults, not runtimes, are the risk here):
+
+| Item                       | Where                                  | Note                                                                                                          |
+|----------------------------|----------------------------------------|---------------------------------------------------------------------------------------------------------------|
+| `THINK_S` (think time)     | `S9_longconn.js` / `S10` default `2`   | Must stay below the shortest server keep-alive timeout in the comparison, or the server closes idle connections and k6 silently re-establishes them. **Actix-Web sets the constraint at 5 s** (`HttpServer::keep_alive` default); a 10 s think time measured only ~48 % of the connections as ESTABLISHED. |
+| Client file descriptors    | load generator host                    | S10 raises `ulimit -n` to `4 × max level + 8192` and warns if the hard limit is lower; the value is recorded.   |
+| Ephemeral port range       | load generator host                    | One client IP to one server socket caps near 28 000 connections with the default range; recorded per run.       |
+| CPU isolation of generator | `K6_CPUS` (e.g. `16-31`)               | k6 at 5 000 VUs is not free; pin it off the pod's cores and state this in the methodology.                      |
+| `ACTIX_WORKERS`            | `frameworks/rust/actix-deployment.yaml`| Not set, so Actix falls back to `num_cpus::get()`; whether that honours the 1-CPU cgroup quota is version-dependent. Set it explicitly and report the value before publishing per-connection numbers. |
+| Server connection caps     | Tomcat `max-connections`, Netty/Vert.x, Actix backlog | Confirm no level is being refused — `est_conns_host` is the check.                          |
+
+> **Methodology note:** this arm deviates from the ingress routing path used by S6–S8, and that
+> must be stated. The *measurement* path is unchanged: all reported values are container-level
+> cAdvisor metrics via Prometheus, with no in-application instrumentation.
 
 Available framework names:
 

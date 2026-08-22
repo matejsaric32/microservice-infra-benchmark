@@ -1,0 +1,23 @@
+---
+# Direct NodePort for the long-lived-connection arm (scripts/S9_longconn.js,
+# scripts/S10_longconn_with_metrics.sh). Bypasses the NGINX ingress so that
+# keep-alive connections terminate on the spring-perf pod itself.
+# Generated from nodeport-template.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: spring-perf-direct
+  namespace: perf-test
+  labels:
+    app: spring-perf
+    longconn: "true"
+spec:
+  type: NodePort
+  selector:
+    app: spring-perf
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+      nodePort: 31090

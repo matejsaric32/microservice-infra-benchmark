@@ -1,0 +1,23 @@
+---
+# Direct NodePort for the long-lived-connection arm (scripts/S9_longconn.js,
+# scripts/S10_longconn_with_metrics.sh). Bypasses the NGINX ingress so that
+# keep-alive connections terminate on the quarkus-reactive-perf-native pod itself.
+# Generated from nodeport-template.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: quarkus-reactive-perf-native-direct
+  namespace: perf-test
+  labels:
+    app: quarkus-reactive-perf-native
+    longconn: "true"
+spec:
+  type: NodePort
+  selector:
+    app: quarkus-reactive-perf-native
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+      nodePort: 31097

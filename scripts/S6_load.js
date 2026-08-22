@@ -101,4 +101,4 @@ export function handleSummary(data) {
     };
 }
 
-// k6 run -e FRAMEWORK=spring-perf -e WARMUP_S=5 -e MEASURE_S=10 S6_load.js
+// k6 run -e FRAMEWORK=actix-e WARMUP_S=5 -e MEASURE_S=10 S6_load.js

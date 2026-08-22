@@ -26,3 +26,4 @@ data:
       default_topic: "order-events"
       client_id: "rust-perf-producer"
       timeout_ms: 5000
+      linger_ms: 0
